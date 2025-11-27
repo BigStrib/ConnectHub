@@ -1,52 +1,69 @@
 // ==========================================
 // CONNECTHUB - WEBRTC VIDEO CHAT
-// Fixed version with reliable peer discovery
+// Simple and reliable peer-to-peer connection
 // ==========================================
 
 class ConnectHub {
     constructor() {
+        // Peer connection
         this.peer = null;
-        this.localStream = null;
-        this.screenStream = null;
-        this.remoteStream = null;
-        this.dataConnection = null;
-        this.mediaConnection = null;
+        this.conn = null;
+        this.call = null;
         
+        // Media streams
+        this.localStream = null;
+        this.remoteStream = null;
+        this.screenStream = null;
+        
+        // State
         this.isVideoEnabled = true;
         this.isAudioEnabled = true;
         this.isScreenSharing = false;
         this.isChatOpen = false;
-        this.unreadCount = 0;
+        this.isConnected = false;
+        this.unreadMessages = 0;
         
-        this.userName = '';
+        // User info
+        this.myName = '';
         this.remoteName = '';
         this.roomCode = '';
-        this.peerId = '';
+        this.myPeerId = '';
         
-        this.retryCount = 0;
-        this.maxRetries = 5;
-        this.retryDelay = 2000;
-        this.pollInterval = null;
+        // Get DOM elements
+        this.cacheElements();
         
-        this.elements = this.getElements();
-        this.init();
+        // Initialize
+        this.bindEvents();
+        this.initCamera();
     }
 
-    getElements() {
-        return {
-            connectionStatus: document.getElementById('connectionStatus'),
+    // ==========================================
+    // CACHE DOM ELEMENTS
+    // ==========================================
+    
+    cacheElements() {
+        this.el = {
+            // Screens
             setupScreen: document.getElementById('setupScreen'),
             callScreen: document.getElementById('callScreen'),
+            
+            // Status
+            connectionStatus: document.getElementById('connectionStatus'),
+            
+            // Setup preview
             localPreview: document.getElementById('localPreview'),
             previewPlaceholder: document.getElementById('previewPlaceholder'),
             togglePreviewVideo: document.getElementById('togglePreviewVideo'),
             togglePreviewAudio: document.getElementById('togglePreviewAudio'),
+            
+            // Setup form
             displayName: document.getElementById('displayName'),
             roomCode: document.getElementById('roomCode'),
             generateCode: document.getElementById('generateCode'),
             copyCode: document.getElementById('copyCode'),
             joinRoom: document.getElementById('joinRoom'),
-            videoArea: document.getElementById('videoArea'),
+            
+            // Call screen videos
             remoteVideo: document.getElementById('remoteVideo'),
             remotePlaceholder: document.getElementById('remotePlaceholder'),
             remoteName: document.getElementById('remoteName'),
@@ -56,6 +73,8 @@ class ConnectHub {
             localPlaceholder: document.getElementById('localPlaceholder'),
             currentRoomCode: document.getElementById('currentRoomCode'),
             copyCurrentCode: document.getElementById('copyCurrentCode'),
+            
+            // Chat
             chatPanel: document.getElementById('chatPanel'),
             chatMessages: document.getElementById('chatMessages'),
             chatEmpty: document.getElementById('chatEmpty'),
@@ -64,118 +83,146 @@ class ConnectHub {
             closeChatBtn: document.getElementById('closeChatBtn'),
             toggleChatBtn: document.getElementById('toggleChatBtn'),
             unreadBadge: document.getElementById('unreadBadge'),
+            
+            // Call controls
             toggleVideo: document.getElementById('toggleVideo'),
             toggleAudio: document.getElementById('toggleAudio'),
             toggleScreenShare: document.getElementById('toggleScreenShare'),
             endCall: document.getElementById('endCall'),
+            
+            // Toast
             toastContainer: document.getElementById('toastContainer')
         };
     }
 
-    init() {
-        this.bindEvents();
-        this.initMedia();
-    }
-
+    // ==========================================
+    // EVENT BINDINGS
+    // ==========================================
+    
     bindEvents() {
-        // Preview
-        this.elements.togglePreviewVideo.addEventListener('click', () => this.togglePreviewVideo());
-        this.elements.togglePreviewAudio.addEventListener('click', () => this.togglePreviewAudio());
+        // Preview controls
+        this.el.togglePreviewVideo.onclick = () => this.togglePreviewCamera();
+        this.el.togglePreviewAudio.onclick = () => this.togglePreviewMic();
         
-        // Setup
-        this.elements.generateCode.addEventListener('click', () => this.generateRoomCode());
-        this.elements.copyCode.addEventListener('click', () => this.copyRoomCode());
-        this.elements.joinRoom.addEventListener('click', () => this.joinRoom());
-        this.elements.roomCode.addEventListener('keypress', e => { if (e.key === 'Enter') this.joinRoom(); });
-        this.elements.displayName.addEventListener('keypress', e => { if (e.key === 'Enter') this.joinRoom(); });
+        // Setup form
+        this.el.generateCode.onclick = () => this.createRoomCode();
+        this.el.copyCode.onclick = () => this.copyCode(this.el.roomCode.value);
+        this.el.joinRoom.onclick = () => this.join();
+        
+        // Enter key to join
+        this.el.displayName.onkeypress = (e) => e.key === 'Enter' && this.join();
+        this.el.roomCode.onkeypress = (e) => e.key === 'Enter' && this.join();
         
         // Call controls
-        this.elements.toggleVideo.addEventListener('click', () => this.toggleVideo());
-        this.elements.toggleAudio.addEventListener('click', () => this.toggleAudio());
-        this.elements.toggleScreenShare.addEventListener('click', () => this.toggleScreenShare());
-        this.elements.endCall.addEventListener('click', () => this.endCall());
-        this.elements.copyCurrentCode.addEventListener('click', () => this.copyCurrentCode());
+        this.el.toggleVideo.onclick = () => this.toggleCamera();
+        this.el.toggleAudio.onclick = () => this.toggleMic();
+        this.el.toggleScreenShare.onclick = () => this.toggleScreen();
+        this.el.endCall.onclick = () => this.hangUp();
+        this.el.copyCurrentCode.onclick = () => this.copyCode(this.roomCode);
         
         // Chat
-        this.elements.toggleChatBtn.addEventListener('click', () => this.toggleChat());
-        this.elements.closeChatBtn.addEventListener('click', () => this.toggleChat());
-        this.elements.sendMessage.addEventListener('click', () => this.sendChatMessage());
-        this.elements.messageInput.addEventListener('keypress', e => { if (e.key === 'Enter') this.sendChatMessage(); });
-
-        window.addEventListener('beforeunload', () => this.cleanup());
+        this.el.toggleChatBtn.onclick = () => this.toggleChat();
+        this.el.closeChatBtn.onclick = () => this.toggleChat();
+        this.el.sendMessage.onclick = () => this.sendChat();
+        this.el.messageInput.onkeypress = (e) => e.key === 'Enter' && this.sendChat();
+        
+        // Cleanup on page close
+        window.onbeforeunload = () => this.cleanup();
     }
 
     // ==========================================
-    // MEDIA
+    // CAMERA & MICROPHONE
     // ==========================================
-
-    async initMedia() {
+    
+    async initCamera() {
         try {
             this.localStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
-                audio: { echoCancellation: true, noiseSuppression: true }
+                video: {
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 },
+                    facingMode: 'user'
+                },
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
             });
             
-            this.elements.localPreview.srcObject = this.localStream;
-            this.elements.previewPlaceholder.classList.add('hidden');
-            this.showToast('Camera and microphone ready', 'success');
-        } catch (error) {
-            console.error('Media error:', error);
+            this.el.localPreview.srcObject = this.localStream;
+            this.el.previewPlaceholder.classList.add('hidden');
+            this.toast('Camera ready', 'success');
+            
+        } catch (err) {
+            console.error('Camera error:', err);
+            
+            // Try audio only
             try {
-                this.localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
+                this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 this.isVideoEnabled = false;
-                this.showToast('Audio only mode', 'info');
-            } catch (e) {
-                this.showToast('Cannot access camera/microphone', 'error');
+                this.el.togglePreviewVideo.classList.remove('active');
+                this.toast('Camera unavailable, audio only', 'info');
+            } catch (err2) {
+                this.toast('Cannot access camera or microphone', 'error');
             }
         }
     }
 
-    togglePreviewVideo() {
+    togglePreviewCamera() {
         if (!this.localStream) return;
-        const track = this.localStream.getVideoTracks()[0];
-        if (track) {
-            this.isVideoEnabled = !this.isVideoEnabled;
-            track.enabled = this.isVideoEnabled;
-            this.elements.togglePreviewVideo.classList.toggle('active', this.isVideoEnabled);
-            this.elements.previewPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
-        }
+        
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        
+        this.isVideoEnabled = !this.isVideoEnabled;
+        videoTrack.enabled = this.isVideoEnabled;
+        
+        this.el.togglePreviewVideo.classList.toggle('active', this.isVideoEnabled);
+        this.el.previewPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
     }
 
-    togglePreviewAudio() {
+    togglePreviewMic() {
         if (!this.localStream) return;
-        const track = this.localStream.getAudioTracks()[0];
-        if (track) {
-            this.isAudioEnabled = !this.isAudioEnabled;
-            track.enabled = this.isAudioEnabled;
-            this.elements.togglePreviewAudio.classList.toggle('active', this.isAudioEnabled);
-        }
+        
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (!audioTrack) return;
+        
+        this.isAudioEnabled = !this.isAudioEnabled;
+        audioTrack.enabled = this.isAudioEnabled;
+        
+        this.el.togglePreviewAudio.classList.toggle('active', this.isAudioEnabled);
     }
 
-    toggleVideo() {
+    toggleCamera() {
         if (!this.localStream) return;
-        const track = this.localStream.getVideoTracks()[0];
-        if (track) {
-            this.isVideoEnabled = !this.isVideoEnabled;
-            track.enabled = this.isVideoEnabled;
-            this.elements.toggleVideo.dataset.active = this.isVideoEnabled;
-            this.elements.toggleVideo.querySelector('i').className = this.isVideoEnabled ? 'fas fa-video' : 'fas fa-video-slash';
-            this.elements.localPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
-        }
+        
+        const videoTrack = this.localStream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        
+        this.isVideoEnabled = !this.isVideoEnabled;
+        videoTrack.enabled = this.isVideoEnabled;
+        
+        this.el.toggleVideo.setAttribute('data-active', this.isVideoEnabled);
+        this.el.toggleVideo.querySelector('i').className = 
+            this.isVideoEnabled ? 'fas fa-video' : 'fas fa-video-slash';
+        this.el.localPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
     }
 
-    toggleAudio() {
+    toggleMic() {
         if (!this.localStream) return;
-        const track = this.localStream.getAudioTracks()[0];
-        if (track) {
-            this.isAudioEnabled = !this.isAudioEnabled;
-            track.enabled = this.isAudioEnabled;
-            this.elements.toggleAudio.dataset.active = this.isAudioEnabled;
-            this.elements.toggleAudio.querySelector('i').className = this.isAudioEnabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
-        }
+        
+        const audioTrack = this.localStream.getAudioTracks()[0];
+        if (!audioTrack) return;
+        
+        this.isAudioEnabled = !this.isAudioEnabled;
+        audioTrack.enabled = this.isAudioEnabled;
+        
+        this.el.toggleAudio.setAttribute('data-active', this.isAudioEnabled);
+        this.el.toggleAudio.querySelector('i').className = 
+            this.isAudioEnabled ? 'fas fa-microphone' : 'fas fa-microphone-slash';
     }
 
-    async toggleScreenShare() {
+    async toggleScreen() {
         if (this.isScreenSharing) {
             this.stopScreenShare();
         } else {
@@ -185,577 +232,680 @@ class ConnectHub {
 
     async startScreenShare() {
         try {
-            this.screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+            this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+                video: { cursor: 'always' }
+            });
+            
             const screenTrack = this.screenStream.getVideoTracks()[0];
             
-            if (this.mediaConnection) {
-                const sender = this.mediaConnection.peerConnection.getSenders().find(s => s.track?.kind === 'video');
-                if (sender) await sender.replaceTrack(screenTrack);
+            // Replace track in call
+            if (this.call && this.call.peerConnection) {
+                const sender = this.call.peerConnection
+                    .getSenders()
+                    .find(s => s.track && s.track.kind === 'video');
+                    
+                if (sender) {
+                    await sender.replaceTrack(screenTrack);
+                }
             }
             
-            this.elements.localVideo.srcObject = this.screenStream;
+            // Show screen in local video
+            this.el.localVideo.srcObject = this.screenStream;
+            
+            // Handle stop
             screenTrack.onended = () => this.stopScreenShare();
             
             this.isScreenSharing = true;
-            this.elements.toggleScreenShare.classList.add('active-share');
-            this.showToast('Screen sharing started', 'success');
-        } catch (error) {
-            if (error.name !== 'AbortError') {
-                this.showToast('Could not share screen', 'error');
+            this.el.toggleScreenShare.classList.add('active-share');
+            this.toast('Screen sharing', 'success');
+            
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('Screen share error:', err);
+                this.toast('Could not share screen', 'error');
             }
         }
     }
 
     async stopScreenShare() {
-        if (this.screenStream) {
-            this.screenStream.getTracks().forEach(t => t.stop());
-            this.screenStream = null;
-        }
+        if (!this.screenStream) return;
         
-        if (this.mediaConnection && this.localStream) {
+        // Stop screen tracks
+        this.screenStream.getTracks().forEach(t => t.stop());
+        this.screenStream = null;
+        
+        // Restore camera track
+        if (this.call && this.call.peerConnection && this.localStream) {
             const videoTrack = this.localStream.getVideoTracks()[0];
             if (videoTrack) {
-                const sender = this.mediaConnection.peerConnection.getSenders().find(s => s.track?.kind === 'video');
-                if (sender) await sender.replaceTrack(videoTrack);
+                const sender = this.call.peerConnection
+                    .getSenders()
+                    .find(s => s.track && s.track.kind === 'video');
+                    
+                if (sender) {
+                    await sender.replaceTrack(videoTrack);
+                }
             }
         }
         
-        this.elements.localVideo.srcObject = this.localStream;
+        // Show camera in local video
+        this.el.localVideo.srcObject = this.localStream;
+        
         this.isScreenSharing = false;
-        this.elements.toggleScreenShare.classList.remove('active-share');
+        this.el.toggleScreenShare.classList.remove('active-share');
     }
 
     // ==========================================
-    // ROOM MANAGEMENT
+    // ROOM CODE
     // ==========================================
-
-    generateRoomCode() {
-        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    
+    createRoomCode() {
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ0123456789';
         let code = '';
-        for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)];
-        this.elements.roomCode.value = code;
-        this.showToast('Code generated: ' + code, 'success');
+        for (let i = 0; i < 6; i++) {
+            code += chars.charAt(Math.floor(Math.random() * chars.length));
+        }
+        this.el.roomCode.value = code;
+        this.toast('Room code: ' + code, 'success');
     }
 
-    copyRoomCode() {
-        const code = this.elements.roomCode.value.trim();
-        if (!code) return this.showToast('Generate a code first', 'error');
-        this.copyToClipboard(code);
-    }
-
-    copyCurrentCode() {
-        this.copyToClipboard(this.roomCode);
-    }
-
-    async copyToClipboard(text) {
+    async copyCode(code) {
+        if (!code || !code.trim()) {
+            this.toast('No code to copy', 'error');
+            return;
+        }
+        
+        code = code.trim().toUpperCase();
+        
         try {
-            await navigator.clipboard.writeText(text);
-            this.showToast('Copied: ' + text, 'success');
-        } catch (e) {
-            const ta = document.createElement('textarea');
-            ta.value = text;
-            ta.style.cssText = 'position:fixed;opacity:0';
-            document.body.appendChild(ta);
-            ta.select();
+            await navigator.clipboard.writeText(code);
+            this.toast('Copied: ' + code, 'success');
+        } catch (err) {
+            // Fallback
+            const input = document.createElement('input');
+            input.value = code;
+            document.body.appendChild(input);
+            input.select();
             document.execCommand('copy');
-            document.body.removeChild(ta);
-            this.showToast('Copied: ' + text, 'success');
+            document.body.removeChild(input);
+            this.toast('Copied: ' + code, 'success');
         }
     }
 
     // ==========================================
-    // PEER CONNECTION
+    // JOIN ROOM
     // ==========================================
-
-    async joinRoom() {
-        const name = this.elements.displayName.value.trim();
-        const code = this.elements.roomCode.value.trim().toUpperCase(); // Case insensitive
-
+    
+    async join() {
+        // Validate
+        const name = this.el.displayName.value.trim();
+        const code = this.el.roomCode.value.trim().toUpperCase();
+        
         if (!name) {
-            this.showToast('Enter your name', 'error');
-            return this.elements.displayName.focus();
+            this.toast('Please enter your name', 'error');
+            this.el.displayName.focus();
+            return;
         }
+        
         if (!code || code.length < 3) {
-            this.showToast('Enter a valid room code', 'error');
-            return this.elements.roomCode.focus();
+            this.toast('Please enter a room code', 'error');
+            this.el.roomCode.focus();
+            return;
         }
-
-        this.userName = name;
+        
+        this.myName = name;
         this.roomCode = code;
         
-        this.elements.joinRoom.disabled = true;
-        this.elements.joinRoom.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting...';
-        this.updateStatus('connecting', 'Connecting...');
-
+        // Update UI
+        this.el.joinRoom.disabled = true;
+        this.el.joinRoom.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Connecting...';
+        this.setStatus('connecting', 'Connecting...');
+        
         try {
-            await this.createPeer();
-        } catch (error) {
-            console.error('Join error:', error);
-            this.showToast('Connection failed', 'error');
+            await this.connectToPeerServer();
+        } catch (err) {
+            console.error('Connection failed:', err);
+            this.toast('Connection failed. Try again.', 'error');
             this.resetJoinButton();
-            this.updateStatus('offline', 'Disconnected');
+            this.setStatus('offline', 'Disconnected');
         }
     }
 
-    createPeer() {
+    // ==========================================
+    // PEER CONNECTION - MAIN LOGIC
+    // ==========================================
+    
+    connectToPeerServer() {
         return new Promise((resolve, reject) => {
-            this.cleanup();
+            // Clean up old peer
+            if (this.peer) {
+                this.peer.destroy();
+            }
             
-            // Create a unique but deterministic peer ID
-            // Using room code + random suffix for uniqueness
-            const randomSuffix = Math.random().toString(36).substring(2, 8);
-            this.peerId = `ch_${this.roomCode}_${randomSuffix}`;
+            // Create peer IDs based on room code
+            // Person 1 will be: ROOMCODE-1
+            // Person 2 will be: ROOMCODE-2
+            const id1 = this.roomCode + '-1';
+            const id2 = this.roomCode + '-2';
             
-            console.log('Creating peer:', this.peerId);
+            // Try to be Person 1 first
+            console.log('Trying to connect as:', id1);
             
-            this.peer = new Peer(this.peerId, {
+            this.peer = new Peer(id1, {
                 debug: 2,
                 config: {
                     iceServers: [
                         { urls: 'stun:stun.l.google.com:19302' },
                         { urls: 'stun:stun1.l.google.com:19302' },
                         { urls: 'stun:stun2.l.google.com:19302' },
-                        { urls: 'stun:stun3.l.google.com:19302' },
                         { urls: 'stun:global.stun.twilio.com:3478' }
                     ]
                 }
             });
-
-            this.peer.on('open', id => {
-                console.log('Peer open:', id);
+            
+            // Connection timeout
+            const timeout = setTimeout(() => {
+                reject(new Error('Connection timeout'));
+            }, 15000);
+            
+            this.peer.on('open', (id) => {
+                clearTimeout(timeout);
+                console.log('Connected as:', id);
+                this.myPeerId = id;
+                
+                // Show call screen
                 this.showCallScreen();
-                this.updateStatus('online', 'Connected');
+                
+                // Set up event listeners
                 this.setupPeerEvents();
-                this.startPeerDiscovery();
+                
+                // If we're Person 1, wait for Person 2
+                // If we're Person 2, connect to Person 1
+                if (id === id1) {
+                    // We are Person 1, wait for Person 2
+                    this.setStatus('online', 'Waiting for friend...');
+                    this.toast('Waiting for someone to join...', 'info');
+                    
+                    // Also try to connect to Person 2 in case they joined first
+                    setTimeout(() => {
+                        if (!this.isConnected) {
+                            this.tryConnect(id2);
+                        }
+                    }, 2000);
+                }
+                
                 resolve(id);
             });
-
-            this.peer.on('error', error => {
-                console.error('Peer error:', error);
-                if (error.type === 'unavailable-id') {
-                    // ID taken, try again with different suffix
-                    this.retryCount++;
-                    if (this.retryCount < this.maxRetries) {
-                        setTimeout(() => this.createPeer().then(resolve).catch(reject), 500);
-                    } else {
-                        reject(error);
-                    }
-                } else if (error.type !== 'peer-unavailable') {
-                    reject(error);
+            
+            this.peer.on('error', (err) => {
+                console.log('Peer error:', err.type, err);
+                
+                if (err.type === 'unavailable-id') {
+                    // ID 1 is taken, try ID 2
+                    clearTimeout(timeout);
+                    console.log('ID taken, trying:', id2);
+                    
+                    this.peer.destroy();
+                    this.peer = new Peer(id2, {
+                        debug: 2,
+                        config: {
+                            iceServers: [
+                                { urls: 'stun:stun.l.google.com:19302' },
+                                { urls: 'stun:stun1.l.google.com:19302' }
+                            ]
+                        }
+                    });
+                    
+                    this.peer.on('open', (id) => {
+                        console.log('Connected as:', id);
+                        this.myPeerId = id;
+                        
+                        this.showCallScreen();
+                        this.setupPeerEvents();
+                        
+                        // We are Person 2, connect to Person 1
+                        this.setStatus('online', 'Connecting to friend...');
+                        
+                        setTimeout(() => {
+                            this.tryConnect(id1);
+                        }, 500);
+                        
+                        resolve(id);
+                    });
+                    
+                    this.peer.on('error', (err2) => {
+                        if (err2.type === 'unavailable-id') {
+                            this.toast('Room is full', 'error');
+                            this.resetJoinButton();
+                            reject(err2);
+                        } else if (err2.type !== 'peer-unavailable') {
+                            reject(err2);
+                        }
+                    });
+                    
+                } else if (err.type === 'peer-unavailable') {
+                    // Other peer not online yet
+                    console.log('Peer not available yet');
+                    this.setStatus('online', 'Waiting for friend...');
+                    
+                } else {
+                    reject(err);
                 }
             });
-
-            setTimeout(() => reject(new Error('Timeout')), 15000);
         });
     }
 
     setupPeerEvents() {
-        this.peer.on('connection', conn => {
+        // Someone connects to us (data)
+        this.peer.on('connection', (conn) => {
             console.log('Incoming connection from:', conn.peer);
-            this.handleDataConnection(conn);
+            this.handleConnection(conn);
         });
-
-        this.peer.on('call', call => {
+        
+        // Someone calls us (media)
+        this.peer.on('call', (call) => {
             console.log('Incoming call from:', call.peer);
             this.handleIncomingCall(call);
         });
-
+        
+        // Disconnected from server
         this.peer.on('disconnected', () => {
-            console.log('Peer disconnected');
-            this.updateStatus('connecting', 'Reconnecting...');
-            if (this.peer && !this.peer.destroyed) {
-                setTimeout(() => this.peer.reconnect(), 1000);
-            }
-        });
-    }
-
-    // ==========================================
-    // PEER DISCOVERY - THE KEY FIX
-    // ==========================================
-
-    startPeerDiscovery() {
-        // Try to find other peers in the room by attempting connections
-        this.discoverPeers();
-        
-        // Keep polling for new peers
-        this.pollInterval = setInterval(() => {
-            if (!this.dataConnection || !this.dataConnection.open) {
-                this.discoverPeers();
-            }
-        }, 3000);
-    }
-
-    async discoverPeers() {
-        // Get list of potential peer IDs we might connect to
-        // We'll try connecting to peers with our room code prefix
-        const roomPrefix = `ch_${this.roomCode}_`;
-        
-        console.log('Discovering peers with prefix:', roomPrefix);
-        
-        // Try to list peers (this is a hack using PeerJS internals)
-        try {
-            const response = await fetch(`https://0.peerjs.com/peerjs/peers`);
-            if (response.ok) {
-                const peers = await response.json();
-                console.log('Found peers:', peers);
-                
-                // Filter peers in our room
-                const roomPeers = peers.filter(p => 
-                    p.startsWith(roomPrefix) && p !== this.peerId
-                );
-                
-                console.log('Room peers:', roomPeers);
-                
-                // Try to connect to each peer
-                for (const remotePeerId of roomPeers) {
-                    if (!this.dataConnection || !this.dataConnection.open) {
-                        this.connectToPeer(remotePeerId);
-                        break; // Only connect to one peer
-                    }
+            console.log('Disconnected from server');
+            this.setStatus('connecting', 'Reconnecting...');
+            
+            // Try to reconnect
+            setTimeout(() => {
+                if (this.peer && !this.peer.destroyed) {
+                    this.peer.reconnect();
                 }
-            }
-        } catch (error) {
-            console.log('Peer list not available, using direct connection attempts');
-        }
+            }, 2000);
+        });
     }
 
-    connectToPeer(remotePeerId) {
-        if (this.dataConnection?.open) return;
-        if (remotePeerId === this.peerId) return;
+    tryConnect(peerId) {
+        if (this.isConnected) return;
         
-        console.log('Connecting to peer:', remotePeerId);
+        console.log('Trying to connect to:', peerId);
         
-        // Data connection
-        const conn = this.peer.connect(remotePeerId, {
+        // Create data connection
+        const conn = this.peer.connect(peerId, {
             reliable: true,
-            metadata: { name: this.userName }
+            metadata: { name: this.myName }
         });
         
-        this.handleDataConnection(conn);
+        this.handleConnection(conn);
         
-        // Media call after short delay
+        // Create media call
         setTimeout(() => {
-            if (this.localStream && (!this.mediaConnection || !this.mediaConnection.open)) {
-                console.log('Calling peer:', remotePeerId);
-                const call = this.peer.call(remotePeerId, this.localStream, {
-                    metadata: { name: this.userName }
+            if (this.localStream && !this.call) {
+                console.log('Calling:', peerId);
+                const call = this.peer.call(peerId, this.localStream, {
+                    metadata: { name: this.myName }
                 });
                 this.handleOutgoingCall(call);
             }
-        }, 500);
+        }, 1000);
     }
 
-    handleDataConnection(conn) {
+    handleConnection(conn) {
         conn.on('open', () => {
-            console.log('Data connection open:', conn.peer);
+            console.log('Data connection open with:', conn.peer);
             
-            // Only accept if we don't have a connection
-            if (this.dataConnection?.open && this.dataConnection.peer !== conn.peer) {
-                console.log('Already connected, rejecting');
-                conn.close();
-                return;
-            }
-            
-            this.dataConnection = conn;
+            // Save connection
+            this.conn = conn;
+            this.isConnected = true;
             this.remoteName = conn.metadata?.name || 'Friend';
             
-            this.updateStatus('online', 'In call');
-            this.showRemoteName();
-            this.showToast(`${this.remoteName} connected!`, 'success');
+            // Update UI
+            this.setStatus('online', 'Connected');
+            this.showRemoteName(this.remoteName);
+            this.toast(this.remoteName + ' joined!', 'success');
             
-            // Open chat automatically when someone connects
+            // Open chat
             if (!this.isChatOpen) {
                 this.toggleChat();
             }
             
-            // Send identity
-            conn.send({ type: 'identity', name: this.userName });
-            
-            // Stop discovery
-            if (this.pollInterval) {
-                clearInterval(this.pollInterval);
-                this.pollInterval = null;
-            }
+            // Send our name
+            conn.send({
+                type: 'name',
+                name: this.myName
+            });
         });
-
-        conn.on('data', data => this.handleData(data));
+        
+        conn.on('data', (data) => {
+            this.handleMessage(data);
+        });
         
         conn.on('close', () => {
-            console.log('Data connection closed');
-            if (this.dataConnection === conn) {
-                this.handleDisconnect();
-            }
+            console.log('Connection closed');
+            this.handleRemoteDisconnect();
         });
-
-        conn.on('error', error => console.error('Data error:', error));
+        
+        conn.on('error', (err) => {
+            console.error('Connection error:', err);
+        });
     }
 
     handleIncomingCall(call) {
         console.log('Answering call');
-        this.remoteName = call.metadata?.name || this.remoteName || 'Friend';
-        this.showRemoteName();
         
+        // Get name from metadata
+        if (call.metadata?.name) {
+            this.remoteName = call.metadata.name;
+            this.showRemoteName(this.remoteName);
+        }
+        
+        // Answer with our stream
         call.answer(this.localStream);
-        this.handleCallStream(call);
+        
+        // Handle the call
+        this.setupCall(call);
     }
 
     handleOutgoingCall(call) {
         console.log('Outgoing call setup');
-        this.handleCallStream(call);
+        this.setupCall(call);
     }
 
-    handleCallStream(call) {
-        this.mediaConnection = call;
-
-        call.on('stream', stream => {
-            console.log('Got remote stream');
-            this.remoteStream = stream;
-            this.elements.remoteVideo.srcObject = stream;
-            this.elements.remotePlaceholder.classList.add('hidden');
-            this.updateStatus('online', 'In call');
-            this.showToast('Video connected!', 'success');
+    setupCall(call) {
+        this.call = call;
+        
+        call.on('stream', (remoteStream) => {
+            console.log('Got remote stream!');
+            this.remoteStream = remoteStream;
+            
+            // Show remote video
+            this.el.remoteVideo.srcObject = remoteStream;
+            this.el.remotePlaceholder.classList.add('hidden');
+            
+            this.setStatus('online', 'In call');
+            this.toast('Video connected!', 'success');
         });
-
+        
         call.on('close', () => {
-            console.log('Call closed');
-            this.handleDisconnect();
+            console.log('Call ended');
+            this.handleRemoteDisconnect();
         });
-
-        call.on('error', error => {
-            console.error('Call error:', error);
+        
+        call.on('error', (err) => {
+            console.error('Call error:', err);
         });
     }
 
-    handleData(data) {
-        console.log('Received:', data);
-        switch (data.type) {
-            case 'identity':
-                this.remoteName = data.name;
-                this.showRemoteName();
-                break;
-            case 'chat':
-                this.displayMessage(data.name, data.message, false);
-                if (!this.isChatOpen) {
-                    this.unreadCount++;
-                    this.updateUnreadBadge();
-                }
-                break;
+    handleMessage(data) {
+        console.log('Got message:', data);
+        
+        if (data.type === 'name') {
+            this.remoteName = data.name;
+            this.showRemoteName(this.remoteName);
+            
+        } else if (data.type === 'chat') {
+            this.addChatMessage(data.name, data.text, false);
+            
+            // Show unread badge if chat is closed
+            if (!this.isChatOpen) {
+                this.unreadMessages++;
+                this.updateUnreadBadge();
+            }
         }
     }
 
-    handleDisconnect() {
-        this.showToast('Participant left', 'info');
-        this.elements.remoteVideo.srcObject = null;
-        this.elements.remotePlaceholder.classList.remove('hidden');
-        this.elements.remoteName.classList.remove('visible');
+    handleRemoteDisconnect() {
+        console.log('Remote peer disconnected');
+        
+        this.isConnected = false;
         this.remoteName = '';
-        this.dataConnection = null;
-        this.mediaConnection = null;
-        this.updateStatus('online', 'Waiting...');
+        this.conn = null;
+        this.call = null;
+        this.remoteStream = null;
         
-        // Restart discovery
-        this.startPeerDiscovery();
-    }
-
-    showRemoteName() {
-        if (this.remoteName) {
-            this.elements.remoteName.textContent = this.remoteName;
-            this.elements.remoteName.classList.add('visible');
-        }
+        // Update UI
+        this.el.remoteVideo.srcObject = null;
+        this.el.remotePlaceholder.classList.remove('hidden');
+        this.el.remoteName.classList.remove('visible');
+        this.el.waitingText.textContent = 'Participant left';
+        
+        this.setStatus('online', 'Waiting...');
+        this.toast('Participant disconnected', 'info');
     }
 
     // ==========================================
-    // UI
+    // UI UPDATES
     // ==========================================
-
+    
     showCallScreen() {
-        this.elements.setupScreen.classList.add('hidden');
-        this.elements.callScreen.classList.remove('hidden');
-        this.elements.currentRoomCode.textContent = this.roomCode;
-        this.elements.displayRoomCode.textContent = this.roomCode;
+        this.el.setupScreen.classList.add('hidden');
+        this.el.callScreen.classList.remove('hidden');
         
+        // Set room code displays
+        this.el.currentRoomCode.textContent = this.roomCode;
+        this.el.displayRoomCode.textContent = this.roomCode;
+        
+        // Set local video
         if (this.localStream) {
-            this.elements.localVideo.srcObject = this.localStream;
-            this.elements.localPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
+            this.el.localVideo.srcObject = this.localStream;
+            this.el.localPlaceholder.classList.toggle('hidden', this.isVideoEnabled);
         }
         
         this.resetJoinButton();
     }
 
     showSetupScreen() {
-        this.elements.callScreen.classList.add('hidden');
-        this.elements.setupScreen.classList.remove('hidden');
+        this.el.callScreen.classList.add('hidden');
+        this.el.setupScreen.classList.remove('hidden');
     }
 
-    updateStatus(status, text) {
-        const dot = this.elements.connectionStatus.querySelector('.status-dot');
-        const txt = this.elements.connectionStatus.querySelector('.status-text');
-        dot.className = 'status-dot ' + status;
-        txt.textContent = text;
+    setStatus(type, text) {
+        const dot = this.el.connectionStatus.querySelector('.status-dot');
+        const label = this.el.connectionStatus.querySelector('.status-text');
+        
+        dot.className = 'status-dot ' + type;
+        label.textContent = text;
     }
 
     resetJoinButton() {
-        this.elements.joinRoom.disabled = false;
-        this.elements.joinRoom.innerHTML = '<i class="fas fa-sign-in-alt"></i> Join Room';
+        this.el.joinRoom.disabled = false;
+        this.el.joinRoom.innerHTML = '<i class="fas fa-sign-in-alt"></i> Join Room';
     }
 
-    toggleChat() {
-        this.isChatOpen = !this.isChatOpen;
-        this.elements.chatPanel.classList.toggle('hidden', !this.isChatOpen);
-        this.elements.toggleChatBtn.classList.toggle('chat-active', this.isChatOpen);
-        
-        if (this.isChatOpen) {
-            this.unreadCount = 0;
-            this.updateUnreadBadge();
-            this.elements.messageInput.focus();
-        }
-    }
-
-    updateUnreadBadge() {
-        if (this.unreadCount > 0) {
-            this.elements.unreadBadge.textContent = this.unreadCount > 9 ? '9+' : this.unreadCount;
-            this.elements.unreadBadge.classList.remove('hidden');
-        } else {
-            this.elements.unreadBadge.classList.add('hidden');
-        }
+    showRemoteName(name) {
+        this.el.remoteName.textContent = name;
+        this.el.remoteName.classList.add('visible');
     }
 
     // ==========================================
     // CHAT
     // ==========================================
-
-    sendChatMessage() {
-        const msg = this.elements.messageInput.value.trim();
-        if (!msg) return;
+    
+    toggleChat() {
+        this.isChatOpen = !this.isChatOpen;
         
-        if (!this.dataConnection?.open) {
-            return this.showToast('Not connected', 'error');
+        this.el.chatPanel.classList.toggle('hidden', !this.isChatOpen);
+        this.el.toggleChatBtn.classList.toggle('chat-active', this.isChatOpen);
+        
+        if (this.isChatOpen) {
+            this.unreadMessages = 0;
+            this.updateUnreadBadge();
+            this.el.messageInput.focus();
         }
-
-        this.dataConnection.send({ type: 'chat', name: this.userName, message: msg });
-        this.displayMessage(this.userName, msg, true);
-        this.elements.messageInput.value = '';
     }
 
-    displayMessage(sender, message, isOwn) {
-        this.elements.chatEmpty?.classList.add('hidden');
+    updateUnreadBadge() {
+        if (this.unreadMessages > 0) {
+            this.el.unreadBadge.textContent = this.unreadMessages > 9 ? '9+' : this.unreadMessages;
+            this.el.unreadBadge.classList.remove('hidden');
+        } else {
+            this.el.unreadBadge.classList.add('hidden');
+        }
+    }
+
+    sendChat() {
+        const text = this.el.messageInput.value.trim();
+        if (!text) return;
         
-        const div = document.createElement('div');
-        div.className = `message ${isOwn ? 'own' : ''}`;
+        if (!this.conn || !this.conn.open) {
+            this.toast('Not connected yet', 'error');
+            return;
+        }
         
-        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        // Send message
+        this.conn.send({
+            type: 'chat',
+            name: this.myName,
+            text: text
+        });
         
-        div.innerHTML = `
+        // Show in our chat
+        this.addChatMessage(this.myName, text, true);
+        
+        // Clear input
+        this.el.messageInput.value = '';
+    }
+
+    addChatMessage(sender, text, isMe) {
+        // Hide empty state
+        if (this.el.chatEmpty) {
+            this.el.chatEmpty.classList.add('hidden');
+        }
+        
+        const time = new Date().toLocaleTimeString([], { 
+            hour: '2-digit', 
+            minute: '2-digit' 
+        });
+        
+        const msgDiv = document.createElement('div');
+        msgDiv.className = 'message' + (isMe ? ' own' : '');
+        
+        msgDiv.innerHTML = `
             <div class="message-header">
-                <span class="message-sender">${isOwn ? 'You' : this.escapeHtml(sender)}</span>
+                <span class="message-sender">${isMe ? 'You' : this.escapeHTML(sender)}</span>
                 <span class="message-time">${time}</span>
             </div>
-            <div class="message-content">${this.escapeHtml(message)}</div>
+            <div class="message-content">${this.escapeHTML(text)}</div>
         `;
         
-        this.elements.chatMessages.appendChild(div);
-        this.elements.chatMessages.scrollTop = this.elements.chatMessages.scrollHeight;
+        this.el.chatMessages.appendChild(msgDiv);
+        this.el.chatMessages.scrollTop = this.el.chatMessages.scrollHeight;
     }
 
-    escapeHtml(text) {
+    escapeHTML(str) {
         const div = document.createElement('div');
-        div.textContent = text;
+        div.textContent = str;
         return div.innerHTML;
     }
 
     // ==========================================
-    // CALL MANAGEMENT
+    // END CALL
     // ==========================================
-
-    endCall() {
+    
+    hangUp() {
         this.cleanup();
         this.showSetupScreen();
-        this.updateStatus('offline', 'Disconnected');
-        this.showToast('Call ended', 'info');
+        this.setStatus('offline', 'Disconnected');
+        this.toast('Call ended', 'info');
         
         // Reset UI
-        this.elements.remoteVideo.srcObject = null;
-        this.elements.remotePlaceholder.classList.remove('hidden');
-        this.elements.remoteName.classList.remove('visible');
-        this.elements.chatPanel.classList.add('hidden');
-        this.elements.toggleChatBtn.classList.remove('chat-active');
+        this.el.remoteVideo.srcObject = null;
+        this.el.remotePlaceholder.classList.remove('hidden');
+        this.el.remoteName.classList.remove('visible');
+        this.el.waitingText.textContent = 'Waiting for participant...';
+        
+        // Close chat
+        this.el.chatPanel.classList.add('hidden');
+        this.el.toggleChatBtn.classList.remove('chat-active');
         this.isChatOpen = false;
         
-        // Clear chat
-        this.elements.chatMessages.innerHTML = `
+        // Clear chat messages
+        this.el.chatMessages.innerHTML = `
             <div class="chat-empty" id="chatEmpty">
                 <i class="fas fa-comment-dots"></i>
                 <p>No messages yet</p>
             </div>
         `;
+        this.el.chatEmpty = document.getElementById('chatEmpty');
         
         // Reset controls
-        this.elements.toggleScreenShare.classList.remove('active-share');
-        this.elements.toggleVideo.dataset.active = 'true';
-        this.elements.toggleVideo.querySelector('i').className = 'fas fa-video';
-        this.elements.toggleAudio.dataset.active = 'true';
-        this.elements.toggleAudio.querySelector('i').className = 'fas fa-microphone';
-        this.unreadCount = 0;
+        this.el.toggleScreenShare.classList.remove('active-share');
+        this.el.toggleVideo.setAttribute('data-active', 'true');
+        this.el.toggleVideo.querySelector('i').className = 'fas fa-video';
+        this.el.toggleAudio.setAttribute('data-active', 'true');
+        this.el.toggleAudio.querySelector('i').className = 'fas fa-microphone';
+        
+        this.unreadMessages = 0;
         this.updateUnreadBadge();
         
-        setTimeout(() => this.initMedia(), 500);
+        // Reinit camera
+        setTimeout(() => this.initCamera(), 500);
     }
 
     cleanup() {
-        if (this.pollInterval) {
-            clearInterval(this.pollInterval);
-            this.pollInterval = null;
-        }
-        
+        // Stop screen share
         if (this.screenStream) {
             this.screenStream.getTracks().forEach(t => t.stop());
             this.screenStream = null;
+            this.isScreenSharing = false;
         }
         
-        if (this.dataConnection) {
-            this.dataConnection.close();
-            this.dataConnection = null;
+        // Close data connection
+        if (this.conn) {
+            this.conn.close();
+            this.conn = null;
         }
         
-        if (this.mediaConnection) {
-            this.mediaConnection.close();
-            this.mediaConnection = null;
+        // Close call
+        if (this.call) {
+            this.call.close();
+            this.call = null;
         }
         
+        // Destroy peer
         if (this.peer) {
             this.peer.destroy();
             this.peer = null;
         }
         
+        this.isConnected = false;
         this.remoteName = '';
-        this.retryCount = 0;
+        this.remoteStream = null;
     }
 
     // ==========================================
-    // TOAST
+    // TOAST NOTIFICATIONS
     // ==========================================
-
-    showToast(message, type = 'info') {
+    
+    toast(message, type = 'info') {
         const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
+        toast.className = 'toast ' + type;
         
-        const icons = { success: 'fa-check', error: 'fa-times', info: 'fa-info' };
+        const icons = {
+            success: 'fa-check',
+            error: 'fa-times',
+            info: 'fa-info'
+        };
         
         toast.innerHTML = `
-            <div class="toast-icon"><i class="fas ${icons[type]}"></i></div>
+            <div class="toast-icon">
+                <i class="fas ${icons[type] || icons.info}"></i>
+            </div>
             <span class="toast-message">${message}</span>
         `;
         
-        this.elements.toastContainer.appendChild(toast);
+        this.el.toastContainer.appendChild(toast);
         
+        // Remove after 4 seconds
         setTimeout(() => {
             toast.style.animation = 'slideDown 0.3s ease reverse';
             setTimeout(() => toast.remove(), 300);
-        }, 3500);
+        }, 4000);
     }
 }
 
-// Initialize
+// ==========================================
+// START APP
+// ==========================================
+
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new ConnectHub();
+    console.log('ConnectHub ready');
 });
