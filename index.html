@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ConnectHub | Secure Video Chat</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <!-- Main Container -->
+    <div class="app-container">
+        
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-video"></i>
+                </div>
+                <span class="logo-text">Connect<span class="accent">Hub</span></span>
+            </div>
+            <div class="connection-status" id="connectionStatus">
+                <span class="status-dot offline"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+        </header>
+
+        <!-- Setup Screen -->
+        <main class="setup-screen" id="setupScreen">
+            <div class="setup-card">
+                <div class="setup-header">
+                    <h1>Start a Conversation</h1>
+                    <p>Create a room or join an existing one</p>
+                </div>
+
+                <!-- Video Preview -->
+                <div class="preview-container">
+                    <video id="localPreview" autoplay muted playsinline></video>
+                    <div class="preview-placeholder" id="previewPlaceholder">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <div class="preview-controls">
+                        <button class="preview-btn active" id="togglePreviewVideo" title="Toggle Camera">
+                            <i class="fas fa-video"></i>
+                        </button>
+                        <button class="preview-btn active" id="togglePreviewAudio" title="Toggle Microphone">
+                            <i class="fas fa-microphone"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Setup Form -->
+                <div class="setup-form">
+                    <div class="input-group">
+                        <label for="displayName">Your Name</label>
+                        <input type="text" id="displayName" placeholder="Enter your name" maxlength="30">
+                    </div>
+
+                    <div class="input-group">
+                        <label for="roomCode">Room Code</label>
+                        <div class="input-row">
+                            <input type="text" id="roomCode" placeholder="Enter or generate code" maxlength="20">
+                            <button class="icon-btn" id="generateCode" title="Generate Code">
+                                <i class="fas fa-random"></i>
+                            </button>
+                            <button class="icon-btn" id="copyCode" title="Copy Code">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button class="primary-btn" id="joinRoom">
+                        <i class="fas fa-sign-in-alt"></i>
+                        Join Room
+                    </button>
+                </div>
+
+                <!-- Instructions -->
+                <div class="instructions">
+                    <div class="instruction-item">
+                        <span class="step">1</span>
+                        <span>Generate or enter a room code</span>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="step">2</span>
+                        <span>Share the code with your friend</span>
+                    </div>
+                    <div class="instruction-item">
+                        <span class="step">3</span>
+                        <span>Both join the same room to connect</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Call Screen -->
+        <main class="call-screen hidden" id="callScreen">
+            <!-- Video Area -->
+            <div class="video-area">
+                <!-- Remote Video (Large) -->
+                <div class="remote-video-container" id="remoteVideoContainer">
+                    <video id="remoteVideo" autoplay playsinline></video>
+                    <div class="remote-placeholder" id="remotePlaceholder">
+                        <div class="placeholder-avatar">
+                            <i class="fas fa-user"></i>
+                        </div>
+                        <p>Waiting for participant...</p>
+                    </div>
+                    <div class="remote-name" id="remoteName"></div>
+                </div>
+
+                <!-- Local Video (Small) -->
+                <div class="local-video-container" id="localVideoContainer">
+                    <video id="localVideo" autoplay muted playsinline></video>
+                    <div class="local-placeholder" id="localPlaceholder">
+                        <i class="fas fa-user"></i>
+                    </div>
+                    <span class="local-label">You</span>
+                </div>
+
+                <!-- Room Info -->
+                <div class="room-info">
+                    <span class="room-code-display">
+                        <i class="fas fa-hashtag"></i>
+                        <span id="currentRoomCode">ABC123</span>
+                    </span>
+                    <button class="icon-btn small" id="copyCurrentCode" title="Copy Code">
+                        <i class="fas fa-copy"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Panel -->
+            <div class="chat-panel" id="chatPanel">
+                <div class="chat-header">
+                    <h3><i class="fas fa-comments"></i> Chat</h3>
+                    <button class="icon-btn small" id="toggleChat" title="Toggle Chat">
+                        <i class="fas fa-chevron-right"></i>
+                    </button>
+                </div>
+                <div class="chat-messages" id="chatMessages">
+                    <div class="chat-empty">
+                        <i class="fas fa-comment-dots"></i>
+                        <p>No messages yet</p>
+                    </div>
+                </div>
+                <div class="chat-input-area">
+                    <input type="text" id="messageInput" placeholder="Type a message..." maxlength="500">
+                    <button class="send-btn" id="sendMessage" title="Send">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Call Controls -->
+            <div class="call-controls">
+                <button class="control-btn" id="toggleVideo" data-active="true" title="Toggle Camera">
+                    <i class="fas fa-video"></i>
+                    <span>Camera</span>
+                </button>
+                <button class="control-btn" id="toggleAudio" data-active="true" title="Toggle Microphone">
+                    <i class="fas fa-microphone"></i>
+                    <span>Mic</span>
+                </button>
+                <button class="control-btn" id="toggleScreenShare" title="Share Screen">
+                    <i class="fas fa-desktop"></i>
+                    <span>Share</span>
+                </button>
+                <button class="control-btn end-call" id="endCall" title="End Call">
+                    <i class="fas fa-phone-slash"></i>
+                    <span>End</span>
+                </button>
+            </div>
+        </main>
+
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- PeerJS Library -->
+    <script src="https://unpkg.com/peerjs@1.5.1/dist/peerjs.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
